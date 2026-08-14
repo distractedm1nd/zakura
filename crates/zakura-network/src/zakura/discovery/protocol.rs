@@ -571,7 +571,7 @@ pub enum DiscoveryMessage {
     GetPeers {
         /// Maximum requested records.
         limit: u16,
-        /// Optional service filter.
+        /// Optional service ids; records advertising any requested id match.
         wanted_services: Vec<ZakuraServiceId>,
         /// Node ids the responder should not return.
         exclude_node_ids: Vec<NodeId>,
@@ -2025,14 +2025,14 @@ impl ZakuraDiscoveryHandle {
         )
     }
 
-    /// Returns owned dial candidates, excluding peers currently registered with the supervisor.
+    /// Returns owned dial candidates, optionally requiring one advertised service.
     pub async fn dial_candidates(
         &self,
-        wanted_services: &[ZakuraServiceId],
+        required_service: Option<&ZakuraServiceId>,
         in_flight_node_ids: &[NodeId],
     ) -> Vec<ZakuraDiscoveryDialCandidate> {
         let connected = self.connected.borrow().clone();
-        let (limit, dial_backoff_base, dial_backoff_max, book_limits) = {
+        let (limit, dial_backoff_base, dial_backoff_max) = {
             let inner = self.inner.lock().await;
             (
                 discovery_dial_slot_limit(
@@ -2044,7 +2044,6 @@ impl ZakuraDiscoveryHandle {
                 ),
                 inner.config.dial_backoff_base,
                 inner.config.dial_backoff_max,
-                inner.config.book_limits,
             )
         };
         if limit == 0 {
@@ -2054,11 +2053,10 @@ impl ZakuraDiscoveryHandle {
         let connected_node_ids = connected_peer_node_ids(&connected);
         let now = current_unix_secs();
         let inner = self.inner.lock().await;
-        let wanted_services = bounded_services(wanted_services, book_limits);
         let mut rng = rand::thread_rng();
         inner.book.dial_candidates(
             limit,
-            &wanted_services,
+            required_service,
             &[],
             DialCandidateExclusions {
                 connected_node_ids: &connected_node_ids,
@@ -2101,7 +2099,7 @@ impl ZakuraDiscoveryHandle {
         let mut rng = rand::thread_rng();
         inner.book.dial_candidates(
             limit,
-            &[],
+            None,
             preferred_services,
             DialCandidateExclusions {
                 connected_node_ids: &connected_node_ids,
@@ -2130,7 +2128,7 @@ impl ZakuraDiscoveryHandle {
     ) -> ZakuraServiceCandidates {
         let connected = self.connected.borrow().clone();
         let connected_node_ids = connected_peer_node_ids(&connected);
-        let (limit, dial_backoff_base, dial_backoff_max, book_limits) = {
+        let (limit, dial_backoff_base, dial_backoff_max) = {
             let inner = self.inner.lock().await;
             (
                 discovery_dial_slot_limit(
@@ -2142,7 +2140,6 @@ impl ZakuraDiscoveryHandle {
                 ),
                 inner.config.dial_backoff_base,
                 inner.config.dial_backoff_max,
-                inner.config.book_limits,
             )
         };
 
@@ -2171,11 +2168,10 @@ impl ZakuraDiscoveryHandle {
             .map(|(node_id, _, _)| node_id)
             .collect();
 
-        let wanted_services = bounded_services(std::slice::from_ref(service), book_limits);
         let mut rng = rand::thread_rng();
         let mut discovered = inner.book.dial_candidates(
             limit,
-            &wanted_services,
+            Some(service),
             &[],
             DialCandidateExclusions {
                 connected_node_ids: &connected_node_ids,
@@ -2189,7 +2185,7 @@ impl ZakuraDiscoveryHandle {
         if used_fallback {
             discovered = inner.book.dial_candidates(
                 limit,
-                &[],
+                None,
                 &[],
                 DialCandidateExclusions {
                     connected_node_ids: &connected_node_ids,
@@ -2220,7 +2216,7 @@ impl ZakuraDiscoveryHandle {
     ) -> ZakuraServiceCandidates {
         let connected = self.connected.borrow().clone();
         let connected_node_ids = connected_peer_node_ids(&connected);
-        let (limit, dial_backoff_base, dial_backoff_max, book_limits) = {
+        let (limit, dial_backoff_base, dial_backoff_max) = {
             let inner = self.inner.lock().await;
             (
                 discovery_dial_slot_limit(
@@ -2232,7 +2228,6 @@ impl ZakuraDiscoveryHandle {
                 ),
                 inner.config.dial_backoff_base,
                 inner.config.dial_backoff_max,
-                inner.config.book_limits,
             )
         };
 
@@ -2277,8 +2272,6 @@ impl ZakuraDiscoveryHandle {
             .map(|(node_id, _, _)| node_id)
             .collect();
 
-        let wanted_services =
-            bounded_services(std::slice::from_ref(&header_sync_service), book_limits);
         let mut excluded_node_ids = Vec::with_capacity(
             in_flight_node_ids
                 .len()
@@ -2295,7 +2288,7 @@ impl ZakuraDiscoveryHandle {
         let mut rng = rand::thread_rng();
         let mut discovered = inner.book.dial_candidates(
             limit,
-            &wanted_services,
+            Some(&header_sync_service),
             &[],
             DialCandidateExclusions {
                 connected_node_ids: &connected_node_ids,
@@ -2309,7 +2302,7 @@ impl ZakuraDiscoveryHandle {
         if used_fallback {
             discovered = inner.book.dial_candidates(
                 limit,
-                &[],
+                None,
                 &[],
                 DialCandidateExclusions {
                     connected_node_ids: &connected_node_ids,
@@ -2340,7 +2333,7 @@ impl ZakuraDiscoveryHandle {
     ) -> ZakuraServiceCandidates {
         let connected = self.connected.borrow().clone();
         let connected_node_ids = connected_peer_node_ids(&connected);
-        let (limit, dial_backoff_base, dial_backoff_max, book_limits) = {
+        let (limit, dial_backoff_base, dial_backoff_max) = {
             let inner = self.inner.lock().await;
             (
                 discovery_dial_slot_limit(
@@ -2352,7 +2345,6 @@ impl ZakuraDiscoveryHandle {
                 ),
                 inner.config.dial_backoff_base,
                 inner.config.dial_backoff_max,
-                inner.config.book_limits,
             )
         };
 
@@ -2400,12 +2392,10 @@ impl ZakuraDiscoveryHandle {
             .map(|(node_id, _, _)| node_id)
             .collect();
 
-        let wanted_services =
-            bounded_services(std::slice::from_ref(&block_sync_service), book_limits);
         let mut rng = rand::thread_rng();
         let mut discovered = inner.book.dial_candidates(
             limit,
-            &wanted_services,
+            Some(&block_sync_service),
             &[],
             DialCandidateExclusions {
                 connected_node_ids: &connected_node_ids,
@@ -2419,7 +2409,7 @@ impl ZakuraDiscoveryHandle {
         if used_fallback {
             discovered = inner.book.dial_candidates(
                 limit,
-                &[],
+                None,
                 &[],
                 DialCandidateExclusions {
                     connected_node_ids: &connected_node_ids,
@@ -2872,7 +2862,8 @@ impl ZakuraDiscoveryBook {
             .map(|(_, entry)| entry)
             .filter(|entry| {
                 !exclude_node_ids.contains(&entry.record.body.node_id)
-                    && advertises_all_services(&entry.record, wanted_services)
+                    && (wanted_services.is_empty()
+                        || advertises_any_service(&entry.record, wanted_services))
             })
             .take(limit)
             .map(|entry| entry.record.clone())
@@ -2901,7 +2892,7 @@ impl ZakuraDiscoveryBook {
     pub(crate) fn dial_candidates<R: rand::Rng + ?Sized>(
         &self,
         limit: usize,
-        required_services: &[ZakuraServiceId],
+        required_service: Option<&ZakuraServiceId>,
         preferred_services: &[ZakuraServiceId],
         exclusions: DialCandidateExclusions<'_>,
         now: u64,
@@ -2927,12 +2918,13 @@ impl ZakuraDiscoveryBook {
                         dial_backoff.0,
                         dial_backoff.1,
                     )
-                    && advertises_all_services(&entry.record, required_services)
+                    && required_service
+                        .is_none_or(|service| entry.record.body.services.contains(service))
                     && has_discovery_usable_direct_addrs(entry)
             })
             .map(DialCandidateRef::SignedRecord)
             .chain(self.static_candidates.values().filter_map(|candidate| {
-                if !required_services.is_empty()
+                if required_service.is_some()
                     || connected_node_ids.contains(&candidate.node_id)
                     || in_flight_node_ids.contains(&candidate.node_id)
                     || self.local_node_id == Some(candidate.node_id)
@@ -3614,12 +3606,6 @@ fn discovery_dial_slot_limit(
     let available_connection_slots = soft_cap.saturating_sub(connected_count);
     let available_dial_slots = max_concurrent_dials.saturating_sub(in_flight_count);
     available_connection_slots.min(available_dial_slots)
-}
-
-fn advertises_all_services(record: &ZakuraNodeRecord, wanted_services: &[ZakuraServiceId]) -> bool {
-    wanted_services
-        .iter()
-        .all(|wanted| record.body.services.contains(wanted))
 }
 
 fn advertises_any_service(record: &ZakuraNodeRecord, wanted_services: &[ZakuraServiceId]) -> bool {
@@ -6177,7 +6163,7 @@ mod tests {
         assert_eq!(
             book.dial_candidates(
                 10,
-                &[service(1)],
+                Some(&service(1)),
                 &[],
                 DialCandidateExclusions {
                     connected_node_ids: &[],
@@ -6217,7 +6203,7 @@ mod tests {
         assert_eq!(
             book.dial_candidates(
                 10,
-                &[service(1)],
+                Some(&service(1)),
                 &[],
                 DialCandidateExclusions {
                     connected_node_ids: &[],
@@ -6317,7 +6303,7 @@ mod tests {
         assert_eq!(
             book.dial_candidates(
                 10,
-                &[],
+                None,
                 &[],
                 DialCandidateExclusions {
                     connected_node_ids: &[],
@@ -6535,34 +6521,31 @@ mod tests {
     }
 
     #[test]
-    fn discovery_book_samples_are_bounded_excluded_and_service_filtered() {
+    fn discovery_book_samples_match_any_wanted_service() {
         let mut book = ZakuraDiscoveryBook::default();
-        let wanted = service(1);
-        let other = service(2);
-        let matching_a = signed_record_with(1, wanted.clone(), test_addr(1));
-        let matching_b = signed_record_with(2, wanted.clone(), test_addr(2));
-        let matching_c = signed_record_with(3, wanted.clone(), test_addr(3));
-        let non_matching = signed_record_with(4, other, test_addr(4));
+        let wanted_a = service(1);
+        let wanted_b = service(2);
+        let matching_a = signed_record_with(1, wanted_a.clone(), test_addr(1));
+        let matching_b = signed_record_with(2, wanted_a.clone(), test_addr(2));
+        let matching_c = signed_record_with(3, wanted_b.clone(), test_addr(3));
+        let non_matching = signed_record_with(4, service(3), test_addr(4));
         let excluded = matching_a.body.node_id;
+        let expected = HashSet::from([matching_b.body.node_id, matching_c.body.node_id]);
         import_confirmed_record(&mut book, matching_a).unwrap();
         import_confirmed_record(&mut book, matching_b).unwrap();
         import_confirmed_record(&mut book, matching_c).unwrap();
         import_confirmed_record(&mut book, non_matching).unwrap();
 
         let sample = book.sample_peers(
-            1,
-            std::slice::from_ref(&wanted),
+            10,
+            &[wanted_a, wanted_b],
             &[excluded],
             NOW,
             test_requester(),
         );
         let sample_ids: HashSet<_> = sample.iter().map(|record| record.body.node_id).collect();
 
-        assert_eq!(sample.len(), 1);
-        assert!(!sample_ids.contains(&excluded));
-        assert!(sample
-            .iter()
-            .all(|record| record.body.services.contains(&wanted)));
+        assert_eq!(sample_ids, expected);
     }
 
     #[test]
@@ -6593,7 +6576,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(7);
         let candidates = book.dial_candidates(
             10,
-            &[service(1)],
+            Some(&service(1)),
             &[],
             DialCandidateExclusions {
                 connected_node_ids: &[],
@@ -6611,7 +6594,7 @@ mod tests {
 
         let candidates = book.dial_candidates(
             10,
-            &[service(1)],
+            Some(&service(1)),
             &[],
             DialCandidateExclusions {
                 connected_node_ids: &[],
@@ -6653,7 +6636,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(11);
         let sampled = book.dial_candidates(
             records.len(),
-            &[service(1)],
+            Some(&service(1)),
             &[],
             DialCandidateExclusions {
                 connected_node_ids: &[],
@@ -6669,7 +6652,7 @@ mod tests {
         let mut other_rng = StdRng::seed_from_u64(12);
         let other_sampled = book.dial_candidates(
             records.len(),
-            &[service(1)],
+            Some(&service(1)),
             &[],
             DialCandidateExclusions {
                 connected_node_ids: &[],
@@ -6709,7 +6692,7 @@ mod tests {
         assert!(book
             .dial_candidates(
                 10,
-                &[service(1)],
+                Some(&service(1)),
                 &[],
                 DialCandidateExclusions {
                     connected_node_ids: &[],
@@ -6724,7 +6707,7 @@ mod tests {
         assert_eq!(
             book.dial_candidates(
                 10,
-                &[service(1)],
+                Some(&service(1)),
                 &[],
                 DialCandidateExclusions {
                     connected_node_ids: &[],
@@ -6755,7 +6738,7 @@ mod tests {
         assert!(book
             .dial_candidates(
                 10,
-                &[service(1)],
+                Some(&service(1)),
                 &[],
                 DialCandidateExclusions {
                     connected_node_ids: &[],
@@ -6769,7 +6752,7 @@ mod tests {
         assert_eq!(
             book.dial_candidates(
                 10,
-                &[service(1)],
+                Some(&service(1)),
                 &[],
                 DialCandidateExclusions {
                     connected_node_ids: &[],
@@ -8342,7 +8325,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(99);
         let selected = book.dial_candidates(
             3,
-            &[service(1)],
+            Some(&service(1)),
             &[],
             DialCandidateExclusions {
                 connected_node_ids: &[],
@@ -8556,7 +8539,10 @@ mod tests {
             .expect("connected self-record imports");
 
         connected_tx.send_replace(vec![peer_id_for(connected_id)]);
-        assert!(handle.dial_candidates(&[service(1)], &[]).await.is_empty());
+        assert!(handle
+            .dial_candidates(Some(&service(1)), &[])
+            .await
+            .is_empty());
 
         let (connected_tx, connected_rx) = watch::channel(Vec::new());
         let handle = discovery_handle_at(
@@ -8583,7 +8569,7 @@ mod tests {
 
         connected_tx.send_replace(vec![peer_id_for(connected_id)]);
         assert_eq!(
-            handle.dial_candidates(&[service(1)], &[]).await,
+            handle.dial_candidates(Some(&service(1)), &[]).await,
             vec![candidate_for(&candidate, false)]
         );
     }
@@ -8600,7 +8586,7 @@ mod tests {
             .expect("candidate imports");
 
         assert!(handle
-            .dial_candidates(&[service(1)], &[candidate_id])
+            .dial_candidates(Some(&service(1)), &[candidate_id])
             .await
             .is_empty());
     }
@@ -8621,11 +8607,6 @@ mod tests {
                 .await
                 .expect("candidate record imports");
         }
-
-        assert!(handle
-            .dial_candidates(&[wanted_a, wanted_b], &[])
-            .await
-            .is_empty());
 
         let prioritized = handle
             .dial_candidates_preferring_any_service(&[service(1), service(2)], &[])

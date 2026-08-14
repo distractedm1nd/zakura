@@ -2074,7 +2074,7 @@ mod tests {
 
         connected_tx.send_replace(Vec::new());
         assert!(handle
-            .dial_candidates(&[ZakuraServiceId::discovery()], &[])
+            .dial_candidates(Some(&ZakuraServiceId::discovery()), &[])
             .await
             .is_empty());
 
