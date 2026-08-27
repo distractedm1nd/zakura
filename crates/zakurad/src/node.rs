@@ -42,6 +42,7 @@ pub struct NodeClient {
     read_state: zakura_state::ReadStateService,
     latest_chain_tip: zakura_state::LatestChainTip,
     chain_tip_change: ChainTipChange,
+    sync_status: crate::components::sync::SyncStatus,
     mempool: MempoolService,
     block_verifier: BlockVerifierService,
     mined_block_sender: mpsc::Sender<(BlockHash, BlockHeight)>,
@@ -52,6 +53,7 @@ impl NodeClient {
         read_state: zakura_state::ReadStateService,
         latest_chain_tip: zakura_state::LatestChainTip,
         chain_tip_change: ChainTipChange,
+        sync_status: crate::components::sync::SyncStatus,
         mempool: MempoolService,
         block_verifier: BlockVerifierService,
         mined_block_sender: mpsc::Sender<(BlockHash, BlockHeight)>,
@@ -60,6 +62,7 @@ impl NodeClient {
             read_state,
             latest_chain_tip,
             chain_tip_change,
+            sync_status,
             mempool,
             block_verifier,
             mined_block_sender,
@@ -69,6 +72,25 @@ impl NodeClient {
     /// Returns the current best chain tip, if the state is not empty.
     pub fn tip(&self) -> Option<(BlockHeight, BlockHash)> {
         self.latest_chain_tip.best_tip_height_and_hash()
+    }
+
+    /// Returns a shared handle for state queries.
+    pub fn read_state(&self) -> zakura_state::ReadStateService {
+        self.read_state.clone()
+    }
+
+    /// Returns the shared finalized database handle.
+    pub fn database(&self) -> zakura_state::ZakuraDb {
+        self.read_state.db().clone()
+    }
+
+    /// Waits until the synchronizer is likely within its recent-tip window.
+    pub async fn wait_until_close_to_tip(&self) -> Result<(), Report> {
+        self.sync_status
+            .clone()
+            .wait_until_close_to_tip()
+            .await
+            .map_err(|error| eyre!("sync status stopped: {error}"))
     }
 
     /// Returns a block from the best chain by hash or height.
@@ -127,6 +149,28 @@ impl NodeClient {
             .map_err(|error| eyre!("transaction verification failed: {error}"))?;
 
         Ok(transaction_id)
+    }
+
+    /// Returns all transactions currently in the mempool.
+    pub async fn mempool_transactions(&self) -> Result<Vec<UnminedTx>, Report> {
+        let response = self
+            .mempool
+            .clone()
+            .oneshot(zakura_node_services::mempool::Request::FullTransactions)
+            .await
+            .map_err(|error| eyre!("mempool request failed: {error}"))?;
+        let zakura_node_services::mempool::Response::FullTransactions { transactions, .. } =
+            response
+        else {
+            return Err(eyre!(
+                "mempool returned an unexpected response: {response:?}"
+            ));
+        };
+
+        Ok(transactions
+            .into_iter()
+            .map(|transaction| transaction.transaction)
+            .collect())
     }
 
     /// Verifies and commits a block to the node's state.
@@ -358,6 +402,7 @@ mod tests {
         assert!(UdpSocket::bind(native_addr).is_err());
         let client = node.client();
         assert_eq!(client.tip(), None);
+        assert_eq!(client.database().tip(), None);
         let mut tip_changes = client.subscribe_chain_tip();
         let genesis = zakura_chain::block::genesis::regtest_genesis_block();
         let genesis_hash = timeout(
@@ -381,6 +426,11 @@ mod tests {
             genesis_hash
         );
         assert_eq!(client.tip(), Some((BlockHeight(0), genesis_hash)));
+        assert!(client
+            .mempool_transactions()
+            .await
+            .expect("mempool query succeeds")
+            .is_empty());
         assert_eq!(
             client
                 .block(BlockHeight(0))

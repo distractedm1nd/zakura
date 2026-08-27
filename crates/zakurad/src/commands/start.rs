@@ -678,6 +678,7 @@ impl StartCmd {
                 read_only_state_service.clone(),
                 latest_chain_tip.clone(),
                 chain_tip_change.clone(),
+                sync_status.clone(),
                 mempool.clone(),
                 block_verifier_router.clone(),
                 submit_block_channel.sender(),
