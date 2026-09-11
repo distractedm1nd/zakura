@@ -1,0 +1,12 @@
+[package]
+name = "zakura-nat-relay"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+anyhow = "1"
+iroh-relay = { package = "zakura-iroh-relay", version = "=1.1.0-rc.1", default-features = false, features = ["tls-ring", "server", "test-utils"] }
+tokio = { version = "1", features = ["rt", "macros", "time"] }
